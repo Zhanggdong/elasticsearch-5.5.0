@@ -85,10 +85,13 @@ public abstract class TransportClient extends AbstractClient {
 
     public static final Setting<TimeValue> CLIENT_TRANSPORT_NODES_SAMPLER_INTERVAL =
         Setting.positiveTimeSetting("client.transport.nodes_sampler_interval", timeValueSeconds(5), Setting.Property.NodeScope);
+    // ping超时时间，默认5秒
     public static final Setting<TimeValue> CLIENT_TRANSPORT_PING_TIMEOUT =
         Setting.positiveTimeSetting("client.transport.ping_timeout", timeValueSeconds(5), Setting.Property.NodeScope);
+    // 是否忽略集群名称，默认不忽略
     public static final Setting<Boolean> CLIENT_TRANSPORT_IGNORE_CLUSTER_NAME =
         Setting.boolSetting("client.transport.ignore_cluster_name", false, Setting.Property.NodeScope);
+    // 是否启用嗅探，默认不启用
     public static final Setting<Boolean> CLIENT_TRANSPORT_SNIFF =
         Setting.boolSetting("client.transport.sniff", false, Setting.Property.NodeScope);
 
@@ -120,14 +123,18 @@ public abstract class TransportClient extends AbstractClient {
 
     private static ClientTemplate buildTemplate(Settings providedSettings, Settings defaultSettings,
                                                 Collection<Class<? extends Plugin>> plugins, HostFailureListener failureListner) {
+        // node.name:没有配置，则配置"_client_"
         if (Node.NODE_NAME_SETTING.exists(providedSettings) == false) {
             providedSettings = Settings.builder().put(providedSettings).put(Node.NODE_NAME_SETTING.getKey(), "_client_").build();
         }
+        // 初始化插件
         final PluginsService pluginsService = newPluginService(providedSettings, plugins);
         final Settings settings = Settings.builder().put(defaultSettings).put(pluginsService.updatedSettings()).build();
         final List<Closeable> resourcesToClose = new ArrayList<>();
+        // 创建线程池：核心
         final ThreadPool threadPool = new ThreadPool(settings);
         resourcesToClose.add(() -> ThreadPool.terminate(threadPool, 10, TimeUnit.SECONDS));
+        // 初始化网络设置
         final NetworkService networkService = new NetworkService(settings, Collections.emptyList());
         try {
             final List<Setting<?>> additionalSettings = new ArrayList<>(pluginsService.getPluginSettings());
@@ -151,7 +158,7 @@ public abstract class TransportClient extends AbstractClient {
                     pluginsService.filterPlugins(Plugin.class).stream()
                             .flatMap(p -> p.getNamedXContent().stream())
                     ).flatMap(Function.identity()).collect(toList()));
-
+            // 模块构建
             ModulesBuilder modules = new ModulesBuilder();
             // plugin modules must be added here, before others or we can get crazy injection errors...
             for (Module pluginModule : pluginsService.createGuiceModules()) {
@@ -169,8 +176,10 @@ public abstract class TransportClient extends AbstractClient {
             BigArrays bigArrays = new BigArrays(settings, circuitBreakerService);
             resourcesToClose.add(bigArrays);
             modules.add(settingsModule);
+            // 初始化网络模块
             NetworkModule networkModule = new NetworkModule(settings, true, pluginsService.filterPlugins(NetworkPlugin.class), threadPool,
                 bigArrays, circuitBreakerService, namedWriteableRegistry, xContentRegistry, networkService, null);
+            // 获取Transport实例
             final Transport transport = networkModule.getTransportSupplier().get();
             final TransportAddress address;
             try {
@@ -178,9 +187,11 @@ public abstract class TransportClient extends AbstractClient {
             } catch (UnknownHostException e) {
                 throw new RuntimeException(e);
             }
+            // 初始化TransportService
             final TransportService transportService = new TransportService(settings, transport, threadPool,
                 networkModule.getTransportInterceptor(),
                 boundTransportAddress -> DiscoveryNode.createLocal(settings, address, UUIDs.randomBase64UUID()), null);
+            // 使用GUICE注入到 ModuleBuild
             modules.add((b -> {
                 b.bind(BigArrays.class).toInstance(bigArrays);
                 b.bind(PluginsService.class).toInstance(pluginsService);
@@ -190,7 +201,6 @@ public abstract class TransportClient extends AbstractClient {
                 b.bind(TransportService.class).toInstance(transportService);
                 b.bind(NetworkService.class).toInstance(networkService);
             }));
-
             Injector injector = modules.createInjector();
             final TransportClientNodesService nodesService =
                 new TransportClientNodesService(settings, transportService, threadPool, failureListner == null
@@ -201,12 +211,13 @@ public abstract class TransportClient extends AbstractClient {
             List<LifecycleComponent> pluginLifecycleComponents = new ArrayList<>(pluginsService.getGuiceServiceClasses().stream()
                 .map(injector::getInstance).collect(Collectors.toList()));
             resourcesToClose.addAll(pluginLifecycleComponents);
-
+            // 开始
             transportService.start();
             transportService.acceptIncomingRequests();
-
+            // 创建ClientTemplate实例
             ClientTemplate transportClient = new ClientTemplate(injector, pluginLifecycleComponents, nodesService, proxy, namedWriteableRegistry);
             resourcesToClose.clear();
+            // 返回ClientTemplate实例
             return transportClient;
         } finally {
             IOUtils.closeWhileHandlingException(resourcesToClose);
@@ -214,10 +225,14 @@ public abstract class TransportClient extends AbstractClient {
     }
 
     private static final class ClientTemplate {
+        // 依赖注入的对象,负责管理各种注入的Bean
         final Injector injector;
+        // 插件管理：启动、停止等
         private final List<LifecycleComponent> pluginLifecycleComponents;
         private final TransportClientNodesService nodesService;
+        // Transport代理
         private final TransportProxyClient proxy;
+        // 暂时不清楚
         private final NamedWriteableRegistry namedWriteableRegistry;
 
         private ClientTemplate(Injector injector, List<LifecycleComponent> pluginLifecycleComponents,
@@ -262,10 +277,11 @@ public abstract class TransportClient extends AbstractClient {
      */
     protected TransportClient(Settings settings, Settings defaultSettings, Collection<Class<? extends Plugin>> plugins,
                               HostFailureListener hostFailureListener) {
+        // 先调用buildTemplate方法创建ClientTemplate模块实例，然后再调用TransportClient构造方法实例化对象
         this(buildTemplate(settings, defaultSettings, plugins, hostFailureListener));
     }
-
     private TransportClient(ClientTemplate template) {
+        // 初始化父类信息
         super(template.getSettings(), template.getThreadPool());
         this.injector = template.injector;
         this.pluginLifecycleComponents = Collections.unmodifiableList(template.pluginLifecycleComponents);

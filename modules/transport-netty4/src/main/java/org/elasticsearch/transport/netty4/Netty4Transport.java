@@ -96,12 +96,13 @@ public class Netty4Transport extends TcpTransport<Channel> {
     static {
         Netty4Utils.setup();
     }
-
+    // workerCount表示transport的总共的worker数目，由transport.netty.worker_count来配置
+    // 默认值是32和Runtime.getRuntime().availableProcessors()中的最小值，也就是不能超过32
     public static final Setting<Integer> WORKER_COUNT =
         new Setting<>("transport.netty.worker_count",
             (s) -> Integer.toString(EsExecutors.boundedNumberOfProcessors(s) * 2),
             (s) -> Setting.parseInt(s, 1, "transport.netty.worker_count"), Property.NodeScope, Property.Shared);
-
+    // 最大
     public static final Setting<ByteSizeValue> NETTY_MAX_CUMULATION_BUFFER_CAPACITY =
         Setting.byteSizeSetting(
                 "transport.netty.max_cumulation_buffer_capacity",
@@ -117,6 +118,7 @@ public class Netty4Transport extends TcpTransport<Channel> {
         byteSizeSetting("transport.netty.receive_predictor_min", NETTY_RECEIVE_PREDICTOR_SIZE, Property.NodeScope, Property.Shared);
     public static final Setting<ByteSizeValue> NETTY_RECEIVE_PREDICTOR_MAX =
         byteSizeSetting("transport.netty.receive_predictor_max", NETTY_RECEIVE_PREDICTOR_SIZE, Property.NodeScope, Property.Shared);
+    // Netty的boss线程池大小
     public static final Setting<Integer> NETTY_BOSS_COUNT =
         intSetting("transport.netty.boss_count", 1, 1, Property.NodeScope, Property.Shared);
 
@@ -159,6 +161,7 @@ public class Netty4Transport extends TcpTransport<Channel> {
     protected void doStart() {
         boolean success = false;
         try {
+            // 创建一个clientBootstrap
             bootstrap = createBootstrap();
             if (NetworkService.NETWORK_SERVER.get(settings)) {
                 final Netty4OpenChannelsHandler openChannels = new Netty4OpenChannelsHandler(logger);
@@ -169,10 +172,12 @@ public class Netty4Transport extends TcpTransport<Channel> {
                     final Settings settings = Settings.builder()
                         .put(createFallbackSettings())
                         .put(entry.getValue()).build();
+                    // 创建一个ServerBootstrap
                     createServerBootstrap(entry.getKey(), settings);
                     bindServer(entry.getKey(), settings);
                 }
             }
+            // 调用TCPTransport的doStart()方法创建一个GENERIC类型的线程池
             super.doStart();
             success = true;
         } finally {

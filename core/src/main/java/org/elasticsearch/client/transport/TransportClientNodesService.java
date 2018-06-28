@@ -127,7 +127,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         this.transportService = transportService;
         this.threadPool = threadPool;
         this.minCompatibilityVersion = Version.CURRENT.minimumCompatibilityVersion();
-
+        // CLIENT_TRANSPORT_NODES_SAMPLER_INTERVAL参数默认5秒，在TransportClient中定义的
         this.nodesSamplerInterval = TransportClient.CLIENT_TRANSPORT_NODES_SAMPLER_INTERVAL.get(this.settings);
         this.pingTimeout = TransportClient.CLIENT_TRANSPORT_PING_TIMEOUT.get(this.settings).millis();
         this.ignoreClusterName = TransportClient.CLIENT_TRANSPORT_IGNORE_CLUSTER_NAME.get(this.settings);
@@ -135,13 +135,14 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         if (logger.isDebugEnabled()) {
             logger.debug("node_sampler_interval[{}]", nodesSamplerInterval);
         }
-
+        // 这里判断是否启用了嗅探：这个Sniff参数就在这里使用
         if (TransportClient.CLIENT_TRANSPORT_SNIFF.get(this.settings)) {
             this.nodesSampler = new SniffNodesSampler();
         } else {
             this.nodesSampler = new SimpleNodeSampler();
         }
         this.hostFailureListener = hostFailureListener;
+        // 创建定时任务：通过GENERIC类型的线程池处理
         this.nodesSamplerFuture = threadPool.schedule(nodesSamplerInterval, ThreadPool.Names.GENERIC, new ScheduledNodeSampler());
     }
 
@@ -242,11 +243,14 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         if (closed) {
             throw new IllegalStateException("transport client is closed");
         }
+        // 确保Nodes可用
         ensureNodesAreAvailable(nodes);
+        // 随机获取
         int index = getNodeNumber();
         RetryListener<Response> retryListener = new RetryListener<>(callback, listener, nodes, index, hostFailureListener);
         DiscoveryNode node = retryListener.getNode(0);
         try {
+            // 回调doWithNode
             callback.doWithNode(node, retryListener);
         } catch (Exception e) {
             try {
@@ -331,7 +335,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
             nodes = Collections.emptyList();
         }
     }
-
+    // 随机选取一个Node
     private int getNodeNumber() {
         int index = randomNodeGenerator.incrementAndGet();
         if (index < 0) {
@@ -367,9 +371,11 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         protected List<DiscoveryNode> validateNewNodes(Set<DiscoveryNode> nodes) {
             for (Iterator<DiscoveryNode> it = nodes.iterator(); it.hasNext(); ) {
                 DiscoveryNode node = it.next();
+                // 循环的检验与每个可用节点建立的连接是否已完成
                 if (!transportService.nodeConnected(node)) {
                     try {
                         logger.trace("connecting to node [{}]", node);
+                        // 确定已经建立连接
                         transportService.connectToNode(node);
                     } catch (Exception e) {
                         it.remove();
@@ -377,7 +383,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                     }
                 }
             }
-
+            // 返回列表
             return Collections.unmodifiableList(new ArrayList<>(nodes));
         }
 
@@ -403,7 +409,9 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         protected void doSample() {
             HashSet<DiscoveryNode> newNodes = new HashSet<>();
             HashSet<DiscoveryNode> newFilteredNodes = new HashSet<>();
+            //
             for (DiscoveryNode listedNode : listedNodes) {
+                // 通过Netty4获取connection
                 try (Transport.Connection connection = transportService.openConnection(listedNode, LISTED_NODES_PROFILE)){
                     final PlainTransportFuture<LivenessResponse> handler = new PlainTransportFuture<>(
                         new FutureTransportResponseHandler<LivenessResponse>() {
@@ -412,6 +420,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                                 return new LivenessResponse();
                             }
                         });
+                    // 发送STATE的类型的Request：最终是调用了一个异步发送的方式
                     transportService.sendRequest(connection, TransportLivenessAction.NAME, new LivenessRequest(),
                         TransportRequestOptions.builder().withType(TransportRequestOptions.Type.STATE).withTimeout(pingTimeout).build(),
                         handler);
@@ -437,8 +446,9 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                         (Supplier<?>) () -> new ParameterizedMessage("failed to get node info for {}, disconnecting...", listedNode), e);
                 }
             }
-
+            // 验证节点
             nodes = validateNewNodes(newNodes);
+            // 保存阶段
             filteredNodes = Collections.unmodifiableList(new ArrayList<>(newFilteredNodes));
         }
     }
@@ -449,6 +459,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
         protected void doSample() {
             // the nodes we are going to ping include the core listed nodes that were added
             // and the last round of discovered nodes
+            // 获取待ping的nodesToPing：从listedNodes和nodes获取
             Set<DiscoveryNode> nodesToPing = new HashSet<>();
             for (DiscoveryNode node : listedNodes) {
                 nodesToPing.add(node);
@@ -456,11 +467,14 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
             for (DiscoveryNode node : nodes) {
                 nodesToPing.add(node);
             }
-
+            // 设置一个计数器：大小为待ping的Node的列表nodesToPing大小
             final CountDownLatch latch = new CountDownLatch(nodesToPing.size());
+            // 将cluster响应状态存储到ConcurrentMap中：clusterStateResponses
             final ConcurrentMap<DiscoveryNode, ClusterStateResponse> clusterStateResponses = ConcurrentCollections.newConcurrentMap();
             try {
+                // 首先也是先向所有的listedNode都ping一遍，注意这里用的是MANAGEMENT的threadPool
                 for (final DiscoveryNode nodeToPing : nodesToPing) {
+                    // 通过MANAGEMENT类型的线程处理:
                     threadPool.executor(ThreadPool.Names.MANAGEMENT).execute(new AbstractRunnable() {
 
                         /**
@@ -468,7 +482,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                          * that will be closed at the end of the execution.
                          */
                         Transport.Connection connectionToClose = null;
-
+                        // 关闭异常
                         void onDone() {
                             try {
                                 IOUtils.closeWhileHandlingException(connectionToClose);
@@ -476,7 +490,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                                 latch.countDown();
                             }
                         }
-
+                        // 如果失败：调用 onDone()方法，同时抛出异常信息
                         @Override
                         public void onFailure(Exception e) {
                             onDone();
@@ -496,6 +510,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                             Transport.Connection pingConnection = null;
                             if (nodes.contains(nodeToPing)) {
                                 try {
+                                    // 调用TransportService发起连接：获取ping的连接
                                     pingConnection = transportService.getConnection(nodeToPing);
                                 } catch (NodeNotConnectedException e) {
                                     // will use a temp connection
@@ -503,11 +518,13 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
                             }
                             if (pingConnection == null) {
                                 logger.trace("connecting to cluster node [{}]", nodeToPing);
+                                // 调用TransportService发起连接：这里会建立了一堆连接
                                 connectionToClose = transportService.openConnection(nodeToPing, LISTED_NODES_PROFILE);
                                 pingConnection = connectionToClose;
                             }
                             transportService.sendRequest(pingConnection, ClusterStateAction.NAME,
                                 Requests.clusterStateRequest().clear().nodes(true).local(true),
+                                // 在pingTimeout时间内写入STATE
                                 TransportRequestOptions.builder().withType(TransportRequestOptions.Type.STATE)
                                     .withTimeout(pingTimeout).build(),
                                 new TransportResponseHandler<ClusterStateResponse>() {
@@ -524,6 +541,7 @@ final class TransportClientNodesService extends AbstractComponent implements Clo
 
                                     @Override
                                     public void handleResponse(ClusterStateResponse response) {
+                                        // 将nodeToPing拿到的clusterState添加到clusterStateResponses当中
                                         clusterStateResponses.put(nodeToPing, response);
                                         onDone();
                                     }

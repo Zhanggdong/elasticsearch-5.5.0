@@ -552,6 +552,7 @@ public abstract class TcpTransport<Channel> extends AbstractLifecycleComponent i
                     connectionProfile.getConnectTimeout();
                 final TimeValue handshakeTimeout = connectionProfile.getHandshakeTimeout() == null ?
                     connectTimeout : connectionProfile.getHandshakeTimeout();
+                // 处理数据
                 final Version version = executeHandshake(node, channel, handshakeTimeout);
                 if (version != null) {
                     // if we are talking to a pre 5.2 node we won't be able to retrieve the version since it doesn't implement the handshake
@@ -1608,6 +1609,7 @@ public abstract class TcpTransport<Channel> extends AbstractLifecycleComponent i
             // we also have no payload on the request but the response will contain the actual version of the node we talk
             // to as the payload.
             final Version minCompatVersion = getCurrentVersion().minimumCompatibilityVersion();
+            // 调用该方法发送数据
             sendRequestToChannel(node, channel, requestId, HANDSHAKE_ACTION_NAME, TransportRequest.Empty.INSTANCE,
                 TransportRequestOptions.EMPTY, minCompatVersion, TransportStatus.setHandshake((byte)0));
             if (handler.latch.await(timeout.millis(), TimeUnit.MILLISECONDS) == false) {

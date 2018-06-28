@@ -82,27 +82,32 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
      * @see ReplicationRequest#createTask(long, java.lang.String, java.lang.String, org.elasticsearch.tasks.TaskId)
      */
     static final int MAX_SOURCE_LENGTH_IN_TOSTRING = 2048;
-
+    // 索引类型
     private String type;
+    // 索引ID
     private String id;
+    // 路由信息：如果用户没有指定字段，则以id值为路由
     @Nullable
     private String routing;
     @Nullable
     private String parent;
+    // 时间戳
     @Nullable
     private String timestamp;
+    //
     @Nullable
     private TimeValue ttl;
-
+    // 索引内容
     private BytesReference source;
-
+    // 操作类型
     private OpType opType = OpType.INDEX;
-
+    // 版本
     private long version = Versions.MATCH_ANY;
+    // 版本类型
     private VersionType versionType = VersionType.INTERNAL;
-
+    // 数据类型
     private XContentType contentType;
-
+    // 管道：有些操作是可以基于管道的，比如使用ingest-attachment插件是定义的附件管道
     private String pipeline;
 
     /**

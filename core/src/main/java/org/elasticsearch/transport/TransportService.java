@@ -206,6 +206,7 @@ public class TransportService extends AbstractLifecycleComponent {
         adapter.rxMetric.clear();
         adapter.txMetric.clear();
         transport.transportServiceAdapter(adapter);
+        // 调用父类的start()方法
         transport.start();
 
         if (transport.boundAddress() != null && logger.isInfoEnabled()) {
@@ -214,7 +215,9 @@ public class TransportService extends AbstractLifecycleComponent {
                 logger.info("profile [{}]: {}", entry.getKey(), entry.getValue());
             }
         }
+        // 获取节点
         localNode = localNodeFactory.apply(transport.boundAddress());
+        // 注册到injection中：这里的线程类型是SAME
         registerRequestHandler(
             HANDSHAKE_ACTION_NAME,
             () -> HandshakeRequest.INSTANCE,

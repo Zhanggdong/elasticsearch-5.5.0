@@ -36,14 +36,16 @@ import java.util.Map;
 import static java.util.Collections.unmodifiableMap;
 
 final class TransportProxyClient {
-
+    // 保存nodesService
     private final TransportClientNodesService nodesService;
+    // 各种操作action的proxy变量：比如index、update、search、bulk等
     private final Map<Action, TransportActionNodeProxy> proxies;
 
     TransportProxyClient(Settings settings, TransportService transportService,
                                 TransportClientNodesService nodesService, List<GenericAction> actions) {
         this.nodesService = nodesService;
         Map<Action, TransportActionNodeProxy> proxies = new HashMap<>();
+        // 循环的添加action的proxy到HashMap中
         for (GenericAction action : actions) {
             if (action instanceof Action) {
                 proxies.put((Action) action, new TransportActionNodeProxy(settings, action, transportService));
